@@ -144,11 +144,12 @@ async function getPage(tries = 0) {
 
 /** Serve files. */
 async function server(request, response) {
-    if (String(request.url).includes('onion.png')) {
+    const {url} = request;
+    if (url.includes('onion.png') || url.includes('favicon.ico')) {
         response.setHeader('Content-Type', 'image/png');
         return response.end(await onionPng_);
     }
-    else if (String(request.url).includes('sad.png')) {
+    if (url.includes('sad.png')) {
         response.setHeader('Content-Type', 'image/png');
         return response.end(await sadPng_);
     }
