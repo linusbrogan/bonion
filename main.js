@@ -1,273 +1,169 @@
-'use strict';
-// Reinvent the wheel
-function vow(func, obj) {
-    return (...args) => new Promise((resolve, reject) => func.bind(obj)(...args, (err, data) => err ? reject(err) : resolve(data)));
-}
-vow.err = (func, obj) => (...args) => new Promise((resolve, reject) => func.bind(obj)(...args, err => err ? reject(err) : resolve(null)));
-
-// fs module
-const cfs = require('fs');
-const fs = {
-    readFile: vow(cfs.readFile, cfs),
-    unlink: vow.err(cfs.unlink, cfs),
-    writeFile: vow.err(cfs.writeFile, cfs)
-};
-
+const fs = require('fs');
+const fsp = fs.promises;
 const http = require('http');
-let l = console.log
-// request module
-const options = {
+const req = require('request-promise-native').defaults({
     encoding: 'utf8',
     followAllRedirects: true,
     followRedirect: true,
     headers: {
-      //  'User-Agent': 'bonion-alert',
+        'User-Agent': 'bon-onion-forecast',
         'Accept-Language': 'en-US, en;q=0.5, *;q=0.1',
         'Content-Type': 'application/json',
     },
     method: 'GET',
     resolveWithFullResponse: true,
     simple: true,
-    strictSSL: true 
-};
-const req = require('request-promise-native').defaults(options);
-const url = "https://legacy.cafebonappetit.com/api/2/menus?format=json&cafe=150"
+    strictSSL: true
+});
 
-const bonPath = './bon.html';
-const errPath = './err.html';
-
-function zeroPad(s, n) {
-    s = String(s);
-    while (s.length < n) s = `0${s}`;
-    return s;
-}
-function current(str) {l('current',str);
-    str = String(str).match(/\d{4}-\d\d-\d\d/);
-    if (!str) return false;
-    let now = new Date();
-    let today = `${now.getFullYear()}-${zeroPad(now.getMonth()+1, 2)}-${zeroPad(now.getDate(), 2)}`;
-    l(today);
-    l(today===str[0]);
-    return today === str[0];
-}
-
-let p;
-// Load the menu
-async function readMenu(tries = 0) {
-    console.log(`API tries: ${tries}`);
-    // Try to fetch from API
-    let res;
-    try {
-        if (!p) p = req(url);
-        res = await p;
-    } catch (e) {l('error waiting p');
-        if (e && tries < 10) {
-            p = null;
-            return readMenu(tries + 1);
-        }
-        //or write temporary failure page
-    } finally {
-        let menu = JSON.parse(res.body);l('parsed menu')
-        let today = menu.days[0];
-        // Is this today's meal?
-        if (!current(today.date)) {
-            p = null;
-            return readMenu(tries);
-        }
-        // Generate per meal onion rating;
-        let meals = today.cafes[150].dayparts[0];
-        let MENU = {date: today.date};
-        for (let meal of meals) { // For each meal
-            let MEAL = {};
-            let stations = meal.stations;
-            for (let {items, label} of stations) { // For each station
-                let STATION = {}
-                MEAL[label] = STATION;
-                STATION.items = items.map(id => menu.items[id]).filter(v => v); // Get item details
-                STATION.rating = STATION.items.reduce((count, item) => { // Does it have onion?
-                    let onion = item.description.toLowerCase().indexOf('onion');
-                    if (onion != -1) count[0]++;
-                    count[1]++;
-                    return count;
-                }, [0, 0]);;;;;STATION.items=[];
-            }
-            MENU[meal.label] = MEAL;
-        }
-        return MENU;
-    }
-}
-/////
-function genMealHtml(meal, name) {
-    return `<h2>${name}</h2><p>Onion Rating:BAD</p>`;
-
-}
-function _pageGen(menu) {
-    let html = cfs.readFileSync('./template.html', 'utf8').split('%%CONTENT%%');
-    let content = ''
-    for (let meal of Object.keys(menu)) {
-        if (meal == 'date') continue;
-        content += genMealHtml(menu[meal], meal);
-    }
-    return html.join(content);
-}
-/////
-
-let partA=`<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Onion Rater</title>
-        <link rel="stylesheet" href="https://unpkg.com/material-components-web@latest/dist/material-components-web.min.css">
-        <link rel="stylesheet" href="https://necolas.github.io/normalize.css/8.0.1/normalize.css">
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700">
-
-        <style>
-            .mdc-top-app-bar {
-                background-color: #ff40ff;
-            }
-            h2, h3 {
-                padding-left: 20px;
-            }
-            h2 {
-                padding-top: 10px;
-            }
-            .bonion {
-                height: 1rem;
-                display: inline;
-
-            }
-            .bIcon {
-                background: url(/png) 100% 50%/auto 100% no-repeat;
-                display:block;
-                height: 32px;
-                width: 32px;
-            }
-            .onion-1 {
-                background-color: #40ff40;
-            }
-            .onion-2 {
-                background-color: #ffff40;
-            }
-            .onion-3 {
-                background-color: #ff4040;
-            }
-            .mdc-top-app-bar__title {
-                padding-left : 4px;
-            }
-            .onion-rate {
-                height: 20px; width: 20px;
-                display: inline-block;
-            }
-        </style>
-    </head>
-    <body>
-        <header class="mdc-top-app-bar mdc-top-app-bar--fixed">
-            <div class="mdc-top-app-bar__row">
-                <section class="mdc-top-app-bar__section mdc-top-app-bar__section--align-start">
-                          <!--ICON-->
-                          <i class="bIcon"></i><span class="mdc-top-app-bar__title">Bon Onion Alert</span><i class="bIcon"></i>
-                </section>
-            </div>
-        </header>`;
-let partB = `        <script>
-            for (let card of document.querySelectorAll('.mdc-card')) {
-                card.addEventListener('click', function onclick(ev) {
-                    window.location.href = `+"`https://lewisandclark.cafebonappetit.com/cafe/fields-dining-room/#${this.childNodes[1].childNodes[1].childNodes[1].textContent.toLowerCase()}`"+`;
-                });
-            }
-        </script>
-    </body>
-</html>`;
-let card1=`        <div class="mdc-card %%FIXED%% onion-%%RAT%%">
+const menuUrl = "https://legacy.cafebonappetit.com/api/2/menus?format=json&cafe=150"
+const mealCard = `
+        <div class="mdc-card %%FIXED%% onion-%%ONIONS%%">
             <div class="mdc-card__primary-action mdc-ripple-upgraded" tabindex="0">
                 <div class="demo-card__primary">
-                    <h2 class="demo-card__title mdc-typography--headline6">%%MEAL%% %%ONIONS%%</h2>
-                    <h3 class="demo-card__subtitle mdc-typography--subtitle2">%%RATING%%</h3>
+                    <h2 class="demo-card__title mdc-typography--headline6">%%MEAL%% %%ICONS%%</h2>
+                    <h3 class="demo-card__subtitle mdc-typography--subtitle2">%%FORECAST%%</h3>
                 </div>
             </div>
-        </div>`;
-        
+        </div>
+`;
+const onion = '<i class="bIcon onion-rate"></i>'
+const sadOnion = '<i class="sadIcon onion-rate"></i>'
+const onionPng_ = fsp.readFile('onion.png');
+const sadPng_ = fsp.readFile('sad.png');
+const template_ = fsp.readFile('template.html', 'utf8');
 
-let onion = '<i class="bIcon onion-rate"></i>'
+let apiResponse_;
+let webpageHtml;
 
-function rate(items) {
-    if (items == 0) return ['Light onion day. Leave your mint gum at home.', onion];
-    if (items == 1) return ['You are likely to stumble upon some onions.', onion + onion];
-    return ['Guaranteed heavy onions. Bring your mouthwash for others\' sake', onion + onion + onion];
+/** Left pads the given string with zeroes. */
+function zeroPad(string, length) {
+    string = String(string);
+    while (string.length < length) string = `0${string}`;
+    return string;
 }
 
+/** Returns today's date. */
+function today() {
+    let now = new Date();
+    return `${now.getFullYear()}-${zeroPad(now.getMonth() + 1, 2)}-${zeroPad(now.getDate(), 2)}`;
+}
 
+/** Returns whether `string` contains today's date. */
+function isCurrent(string) {
+    const dates = String(string).match(/\d{4}-\d\d-\d\d/);
+    return dates && today() === dates[0];
+}
 
+/** Returns an onion forecast. */
+function forecast(items) {
+    if (items == -1) return ['You\'ll need to get your veggies elsewhere.', sadOnion];
+    if (items == 0) return ['Light onion day. Leave your mint gum at home.', onion];
+    if (items == 1) return ['You are likely to stumble upon some onions.', onion.repeat(2)];
+    return ['Guaranteed heavy onions. Bring your mouthwash for others\' sake', onion.repeat(3)];
+}
 
-
-
-////
-function genPage(menu) {console.log('gen Page');
-    console.log(menu);
-    let fixed = 'mdc-top-app-bar--fixed-adjust';
-    let html = `<!--${menu.date}-->`+partA;
-    for (let meal of Object.keys(menu)) {l(meal);
-        let MEAL = menu[meal];
-        if (meal=="date") continue;
-        let rating = 0;
-        for (let station of Object.keys(MEAL)) {
-            rating += MEAL[station].rating[0];
+/** Counts onion frequency in the menu. */
+async function readMenu(tries = 0) {
+    let apiResponse;
+    try {
+        if (!apiResponse_) apiResponse_ = req(menuUrl);
+        apiResponse = await apiResponse_;
+    } catch (error) {
+        if (error && tries < 10) {
+            apiResponse_ = null;
+            await readMenu(tries + 1);
         }
-        let block = card1.replace('%%FIXED%%', fixed);l(rating);
-        block = block.replace('%%MEAL%%', meal).replace('%%RATING%%', rate(rating)[0]).replace('%%ONIONS%%', rate(rating)[1]).replace('%%RAT%%', Math.min(3, rating + 1));
-        html += block;
+    } finally {
+        let menuData = JSON.parse(apiResponse.body);
+        let today = menuData.days[0];
+        if (!isCurrent(today.date)) {
+            apiResponse_ = null;
+            return readMenu(tries);
+        }
+
+        // Generate per meal onion score
+        let meals = today.cafes[150].dayparts[0];
+        let menu = {date: today.date};
+        for (let {stations, label: mealName} of meals) {
+            let meal = {};
+            menu[mealName] = meal;
+            for (let {items, label} of stations)
+                meal[label] = items
+                    .map(id => menuData.items[id])
+                    .filter(Boolean)
+                    .reduce((onions, item) => onions + item.description.toLowerCase().includes('onion'), 0)
+        }
+        return menu;
+    }
+}
+
+/** Generate the webpage HTML from the menu. */
+async function genPage(menu, onions = 0) {
+    let fixed = 'mdc-top-app-bar--fixed-adjust';
+    const html = `<!--${menu.date}-->\n${await template_}`;
+    let meals = '';
+    for (let mealName in menu) {
+        if (mealName == "date") continue;
+        const meal = menu[mealName];
+        for (let station in meal) onions += meal[station];
+        const forecastData = forecast(onions);
+        let block = mealCard
+            .replace(/%%FIXED%%/g, fixed)
+            .replace(/%%MEAL%%/g, mealName)
+            .replace(/%%FORECAST%%/g, forecastData[0])
+            .replace(/%%ICONS%%/g, forecastData[1])
+            .replace(/%%ONIONS%%/g, Math.min(3, onions + 1))
+        meals += block;
         fixed = '';
     }
-    return html + partB;
-}
-let writing = false;
-async function writePage() {console.log('write page');
-    let menu = await readMenu();
-    let page = genPage(menu);
-    return fs.writeFile(bonPath, page, 'utf8');
-}
-async function server(req, res) { console.log('serving request');
-    if (String(req.url).match(/png/g)) {
-        res.setHeader('Content-Type', 'image/png');
-        cfs.createReadStream('./png.png').pipe(res);
-        return;
-    }
-    let page = await getPage();
-    console.log('server page is ', page);
-    res.setHeader('Content-Type', 'text/html');
-    res.write(page);
-    res.end();
-}
-let bonHtml;
-async function getPage(tries = 0) { console.log('get Page',tries);
-    let page;
-    if (current(bonHtml)) return bonHtml;
-    try {l('load page from fs');
-        page = await fs.readFile(bonPath, 'utf8');
-    } catch (e) {console.log('aaa');
-        //could not load page;
-        writePage();
-        if (tries < 5) return getPage(tries +1);
-        else return fs.readFile(errPath, 'utf8');
-    } finally {
-        if (current(page)) bonHtml = page;
-        return page;
-    }
+    return meals ? html.replace(/%%MEALS%%/g, meals) : genPage({
+        date: menu.date,
+        'No meals today': {}
+    }, -1);
 }
 
-async function maintain() { console.log('maintainence');
-    let page;
-    try {l('maintain:read file from fs');
-        page = await fs.readFile(bonPath, 'utf8');
-    } catch(e) {
-        console.log(e);
-    }finally{l('maintain:error reading f=bonhtml')
-        if (!current(page)) {l('maintain: writing page');
-            writePage();
-            bonHtml = null;
-        }
-    }
+/** Generate and cache the webpage HTML. */
+async function writePage() {
+    const menu = await readMenu();
+    webpageHtml = await genPage(menu);
+    return webpageHtml;
 }
-maintain();
-setInterval(maintain, 10*60*1000);
-http.createServer(server).listen(80);
+
+/** Returns a promise for the webpage HTML. */
+async function getPage(tries = 0) {
+    try {
+        if (isCurrent(webpageHtml)) return webpageHtml;
+        await writePage();
+        if (tries < 5) return getPage(tries + 1);
+    } catch (error) {
+        webpageHtml = `${today()}\nError: Could not load Onion Forecast`;
+    }
+    return webpageHtml
+}
+
+/** Serve files. */
+async function server(request, response) {
+    if (String(request.url).includes('onion.png')) {
+        response.setHeader('Content-Type', 'image/png');
+        return response.end(await onionPng_);
+    }
+    else if (String(request.url).includes('sad.png')) {
+        response.setHeader('Content-Type', 'image/png');
+        return response.end(await sadPng_);
+    }
+    response.setHeader('Content-Type', 'text/html');
+    let page = await getPage();
+    response.end(page);
+}
+
+/** Check that the webpage is current. */
+function update() {
+    if (String(webpageHtml).includes('Error') || !isCurrent(webpageHtml)) writePage();
+}
+
+// Update every 5 minutes
+writePage();
+setInterval(update, 5 * 60 * 1000);
+
+http.createServer(server).listen(+process.env.PORT || 80);
